@@ -1,0 +1,23 @@
+[package]
+name = "bitcoin-tx-verify"
+version = "0.1.0"
+authors = ["benthecarman <ben@taprootwizards.com>"]
+description = "Minimal bitcoin transaction verifier with OP_CAT support"
+license = "MIT"
+documentation = "https://docs.rs/bitcoin-tx-verify"
+homepage = "https://github.com/taproot-wizards/bitcoin-tx-verify"
+repository = "https://github.com/benthecarman/bitcoin-tx-verify"
+edition = "2021"
+
+[build-dependencies]
+cc = "1.0.101"
+
+[dependencies]
+bitcoin = { version = "0.32.2", features = ["rand", "serde"] }
+libc = "0.2.155"
+thiserror = "1.0.63"
+
+[dev-dependencies]
+anyhow = "1.0.86"
+rand = "0.8.5"
+bitcoin = { version = "0.32.2", features = ["bitcoinconsensus"] }
