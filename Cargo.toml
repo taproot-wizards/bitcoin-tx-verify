@@ -6,7 +6,7 @@ description = "Minimal bitcoin transaction verifier with OP_CAT support"
 license = "MIT"
 documentation = "https://docs.rs/bitcoin-tx-verify"
 homepage = "https://github.com/taproot-wizards/bitcoin-tx-verify"
-repository = "https://github.com/benthecarman/bitcoin-tx-verify"
+repository = "https://github.com/taproot-wizards/bitcoin-tx-verify"
 edition = "2021"
 
 [build-dependencies]
