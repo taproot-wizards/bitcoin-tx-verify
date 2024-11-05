@@ -60,6 +60,7 @@ fn main() {
         .file("depends/bitcoin/src/crypto/ripemd160.cpp")
         .file("depends/bitcoin/src/crypto/sha1.cpp")
         .file("depends/bitcoin/src/crypto/sha256.cpp")
+        .file("depends/bitcoin/src/crypto/hex_base.cpp")
         .file("depends/bitcoin/src/hash.cpp")
         .file("depends/bitcoin/src/pubkey.cpp")
         .file("depends/bitcoin/src/primitives/transaction.cpp")

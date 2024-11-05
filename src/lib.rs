@@ -127,7 +127,7 @@ pub fn verify(
     .into()
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("Error verifying input {input_idx}: {err_msg}")]
 pub struct VerifyTxError {
     /// Index of the input that failed verification
@@ -332,12 +332,12 @@ mod test {
             source_tx.output[0].clone(),
         )]);
         // verify tx without OP_CAT enabled should work
-        assert!(verify_tx(
+        let res = verify_tx(
             &tx,
             &spent_outputs,
-            standard_script_verify_flags() ^ op_cat_verify_flag()
-        )
-        .is_ok());
+            standard_script_verify_flags() & op_cat_verify_flag(),
+        );
+        assert_eq!(res, Ok(()));
         // verify tx with OP_CAT enabled should fail
         assert!(
             verify_tx(&tx, &spent_outputs, standard_script_verify_flags())
@@ -392,10 +392,12 @@ mod test {
             source_tx.output[0].clone(),
         )]);
         // verify tx with OP_CAT enabled should succeed
-        assert!(
-            verify_tx(&tx, &spent_outputs, standard_script_verify_flags())
-                .is_ok()
+        let res = verify_tx(
+            &tx,
+            &spent_outputs,
+            standard_script_verify_flags() & op_cat_verify_flag(),
         );
+        assert_eq!(res, Ok(()));
         Ok(())
     }
 
@@ -449,10 +451,12 @@ mod test {
             source_tx.output[0].clone(),
         )]);
         // verify tx with OP_CAT enabled should succeed
-        assert!(
-            verify_tx(&tx, &spent_outputs, standard_script_verify_flags())
-                .is_ok()
+        let res = verify_tx(
+            &tx,
+            &spent_outputs,
+            standard_script_verify_flags() & &op_cat_verify_flag(),
         );
+        assert_eq!(res, Ok(()));
         Ok(())
     }
 
@@ -507,17 +511,17 @@ mod test {
             source_tx.output[0].clone(),
         )]);
         // verify tx with OP_CAT disabled should succeed
-        assert!(verify_tx(
+        let res = verify_tx(
             &tx,
             &spent_outputs,
-            standard_script_verify_flags() ^ op_cat_verify_flag()
-        )
-        .is_ok());
-        // verify tx with OP_CAT enabled should fail
-        assert!(
-            verify_tx(&tx, &spent_outputs, standard_script_verify_flags())
-                .is_err()
+            standard_script_verify_flags() & op_cat_verify_flag(),
         );
+        assert_eq!(res, Ok(()));
+        // verify tx with OP_CAT enabled should fail
+        let res =
+            verify_tx(&tx, &spent_outputs, standard_script_verify_flags());
+        assert_ne!(res, Ok(()));
+
         Ok(())
     }
 }
