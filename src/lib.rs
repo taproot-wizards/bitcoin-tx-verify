@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-
+use bitcoin::consensus::Encodable;
 use bitcoin::{OutPoint, Transaction, TxOut};
 use libc::c_uint;
+use std::collections::HashMap;
 use thiserror::Error;
 
 mod ffi {
@@ -55,10 +55,11 @@ mod ffi {
         ) -> *mut VerifyScriptResult;
 
         pub fn verify_tapscript(
-            scriptPubKey: *const c_uchar,
-            scriptPubKeyLen: c_uint,
             txTo: *const c_uchar,
             txToLen: c_uint,
+            prev_outs: *const *const c_uchar,
+            prev_outs_lens: *const c_uint,
+            prev_outs_count: c_uint,
             nIn: c_uint,
             flags: c_uint,
             amount: i64,
@@ -86,18 +87,23 @@ pub fn op_cat_verify_flag() -> u32 {
 }
 
 pub fn verify_tapscript(
-    script_pub_key: &[u8],
     tx_to: &[u8],
     n_in: u32,
+    prev_outs: &[Vec<u8>],
     flags: u32,
     amount: i64,
 ) -> Result<(), String> {
+    // Create arrays of pointers and lengths
+    let ptrs: Vec<*const u8> = prev_outs.iter().map(|s| s.as_ptr()).collect();
+    let lengths: Vec<u32> = prev_outs.iter().map(|s| s.len() as u32).collect();
+
     unsafe {
         &*ffi::verify_tapscript(
-            script_pub_key.as_ptr(),
-            script_pub_key.len() as c_uint,
             tx_to.as_ptr(),
             tx_to.len() as c_uint,
+            ptrs.as_ptr(),
+            lengths.as_ptr(),
+            prev_outs.len() as c_uint,
             n_in as c_uint,
             flags as c_uint,
             amount,
@@ -136,22 +142,45 @@ pub struct VerifyTxError {
     pub err_msg: String,
 }
 
-/// Verify tx input
-pub fn verify_tx_input(
+/// Verifies the transaction input's tapscript, this does not validate the control block
+/// and assumes there is no annex.
+pub fn verify_tx_input_tapscript(
     tx: &Transaction,
     spent_outputs: &HashMap<OutPoint, TxOut>,
     input_idx: usize,
     flags: u32,
 ) -> Result<(), VerifyTxError> {
     let tx_encoded = bitcoin::consensus::serialize(tx);
-    let spent_output = &spent_outputs[&tx.input[input_idx].previous_output];
-    let spk_encoded = &spent_output.script_pubkey.to_bytes();
+    let prevouts: Vec<&TxOut> = tx
+        .input
+        .iter()
+        .enumerate()
+        .map(|(idx, i)| {
+            spent_outputs.get(&i.previous_output).ok_or(VerifyTxError {
+                input_idx: idx,
+                err_msg: "Missing previous output".to_string(),
+            })
+        })
+        .collect::<Result<_, _>>()?;
+
+    let prevouts_encoded = prevouts
+        .iter()
+        .map(|o| {
+            let mut bytes = Vec::new();
+            o.value
+                .consensus_encode(&mut bytes)
+                .expect("serialization failed");
+            bytes.extend_from_slice(o.script_pubkey.as_bytes());
+            bytes
+        })
+        .collect::<Vec<Vec<u8>>>();
+
     if let Err(err_msg) = verify_tapscript(
-        spk_encoded,
         &tx_encoded,
         input_idx as u32,
+        &prevouts_encoded,
         flags,
-        spent_output.value.to_sat() as i64,
+        prevouts[input_idx].value.to_sat() as i64,
     ) {
         Err(VerifyTxError { input_idx, err_msg })
     } else {
@@ -186,7 +215,10 @@ pub fn verify_tx(
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use anyhow::anyhow;
+    use bitcoin::consensus::Decodable;
+    use bitcoin::io::Cursor;
     use bitcoin::{
         absolute::LockTime,
         ecdsa::Signature,
@@ -198,8 +230,6 @@ mod test {
         transaction::Version,
         Amount, EcdsaSighashType, PublicKey, ScriptBuf, TxIn, Witness,
     };
-
-    use super::*;
 
     /// Generate a tx with 0 inputs and 1 output,
     /// with the specified scriptpubkey.
@@ -521,6 +551,35 @@ mod test {
         let res =
             verify_tx(&tx, &spent_outputs, standard_script_verify_flags());
         assert_ne!(res, Ok(()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_tapscript() -> anyhow::Result<()> {
+        let tx_bytes: Vec<u8> = FromHex::from_hex("02000000000101b125029710f2ba7fe064292418d2e833bae2897f7bf6e2f1a2242c87635dfc2e0100000000ffffffff01905f010000000000160014cea9d080198881e00baead0521d5be4e660693771001000100040200000004bb00000020f92434758cd2d2eaa58881b31cdfd3c3515448f80e1b51ac32d77c6ec65f1dce20184c0ede118ec8cd31f699524bae48a81ed01ded5f8d08f2f4ff4286b33b027020d0c8f23f944956475f4ef6823c171a46f2f39123fb8e62c3255087e4d68e366c20ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e01020400000000209d9f03916f15de9baac8de5a785e8f3c401d85a49f476a14de38ad0dcea4d3db010004ffffffff3f79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ef3d745bcf6458f86768ae8adba97ac0a1702cd9cebb786f8665c5a84d87d8ae6b7e7e7e7e201f8f848c1c8015fba58504000a171722182cb30ac3716afa9ecb8d398ab039847c7e7e7e7e7e7e7e7e7e0a54617053696768617368a8767b7e7ea811424950303334302f6368616c6c656e6765a8767b2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179876766b7b7e7e7e7ea86c7c7e6c7601007e7b88517e2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac21c150929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0bb000000").unwrap();
+        let mut tx_cursor = Cursor::new(tx_bytes);
+        let tx: Transaction = Transaction::consensus_decode(&mut tx_cursor)?;
+
+        println!("txid: {}", tx.compute_txid());
+
+        let prevout: TxOut = TxOut {
+            value: Amount::from_btc(0.00100000).unwrap(),
+            script_pubkey: ScriptBuf::from_hex(
+                "5120c6ee2efbb6a663bd2d9996e2e7cf5d2a27cb4375879fe3b6beb669dcce6505cd",
+            )?,
+        };
+
+        let prevouts =
+            HashMap::from_iter([(tx.input[0].previous_output, prevout)]);
+
+        let result = verify_tx_input_tapscript(
+            &tx,
+            &prevouts,
+            0,
+            standard_script_verify_flags() & op_cat_verify_flag(),
+        );
+        assert_eq!(result, Ok(()));
 
         Ok(())
     }
