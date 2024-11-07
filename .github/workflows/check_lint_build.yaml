@@ -45,44 +45,6 @@ jobs:
       
       - name: Clippy
         run: cargo clippy --all-targets --all-features
-      
-      - name: Build
-        run: cargo build --release
-
-      - name: 'Set environment variables: version number and output filenames'
-        run: |
-          APP_VERSION=$(cargo metadata --format-version 1 | \
-            jq -er '.packages | map(select(.name == "bitcoin-tx-verify") | .version) | .[0]')
-          APP_FILENAME="bitcoin-tx-verify-${APP_VERSION}-x86_64-unknown-linux-gnu"
-          DEMO_FILENAME="gen-demo-tx-${APP_VERSION}-x86_64-unknown-linux-gnu"
-          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
-          echo "APP_FILENAME=$APP_FILENAME" >> "$GITHUB_ENV"
-          echo "DEMO_FILENAME=$DEMO_FILENAME" >> "$GITHUB_ENV"
-
-      - name: 'Set filenames for release binaries'
-        run: |
-          pushd "target/release"
-          ln -fs "bitcoin-tx-verify" "${APP_FILENAME}"
-          ln -fs "gen-demo-tx" "${DEMO_FILENAME}"
-          popd
-
-      - name: 'Upload Artifacts'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_FILENAME }}
-          if-no-files-found: error
-          path: |
-            target/release/${{ env.APP_FILENAME }}
-            target/release/${{ env.DEMO_FILENAME }}
-
-      - name: Release
-        uses: softprops/action-gh-release@v2.0.2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: |
-            target/release/${{ env.APP_FILENAME }}
-            target/release/${{ env.DEMO_FILENAME }}
-          fail_on_unmatched_files: true
   
   build-macos:
     name: Build (macos-x86_64)
@@ -109,41 +71,6 @@ jobs:
 
       - name: Build
         run: cargo build --release
-
-      - name: 'Set environment variables: version number and output filenames'
-        run: |
-          APP_VERSION=$(cargo metadata --format-version 1 | \
-            jq -er '.packages | map(select(.name == "bitcoin-tx-verify") | .version) | .[0]')
-          APP_FILENAME="bitcoin-tx-verify-${APP_VERSION}-x86_64-apple-darwin"
-          DEMO_FILENAME="gen-demo-tx-${APP_VERSION}-x86_64-apple-darwin"
-          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
-          echo "APP_FILENAME=$APP_FILENAME" >> "$GITHUB_ENV"
-          echo "DEMO_FILENAME=$DEMO_FILENAME" >> "$GITHUB_ENV"
-
-      - name: 'Set filenames for release binaries'
-        run: |
-          pushd "target/release"
-          ln -fs "bitcoin-tx-verify" "${APP_FILENAME}"
-          ln -fs "gen-demo-tx" "${DEMO_FILENAME}"
-          popd
-
-      - name: 'Upload Artifacts'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_FILENAME }}
-          if-no-files-found: error
-          path: |
-            target/release/${{ env.APP_FILENAME }}
-            target/release/${{ env.DEMO_FILENAME }}
-
-      - name: Release
-        uses: softprops/action-gh-release@v2.0.2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: |
-            target/release/${{ env.APP_FILENAME }}
-            target/release/${{ env.DEMO_FILENAME }}
-          fail_on_unmatched_files: true
 
   build-windows:
     name: Build (x86_64-pc-windows-gnu)
@@ -182,38 +109,3 @@ jobs:
         run: cargo build --release --target x86_64-pc-windows-gnu
         env:
           RUSTFLAGS: "-C linker=/usr/bin/x86_64-w64-mingw32-gcc"
-
-      - name: 'Set environment variables: version number and output filenames'
-        run: |
-          APP_VERSION=$(cargo metadata --format-version 1 | \
-            jq -er '.packages | map(select(.name == "bitcoin-tx-verify") | .version) | .[0]')
-          APP_FILENAME="bitcoin-tx-verify-${APP_VERSION}-x86_64-pc-windows-gnu.exe"
-          DEMO_FILENAME="gen-demo-tx-${APP_VERSION}-x86_64-pc-windows-gnu.exe"
-          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
-          echo "APP_FILENAME=$APP_FILENAME" >> "$GITHUB_ENV"
-          echo "DEMO_FILENAME=$DEMO_FILENAME" >> "$GITHUB_ENV"
-
-      - name: 'Set filenames for release binaries'
-        run: |
-          pushd "target/x86_64-pc-windows-gnu/release"
-          ln -fs "bitcoin-tx-verify.exe" "${APP_FILENAME}"
-          ln -fs "gen-demo-tx.exe" "${DEMO_FILENAME}"
-          popd
-
-      - name: 'Upload Artifacts'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_FILENAME }}
-          if-no-files-found: error
-          path: |
-            target/x86_64-pc-windows-gnu/release/${{ env.APP_FILENAME }}
-            target/x86_64-pc-windows-gnu/release/${{ env.DEMO_FILENAME }}
-
-      - name: Release
-        uses: softprops/action-gh-release@v2.0.2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: |
-            target/x86_64-pc-windows-gnu/release/${{ env.APP_FILENAME }}
-            target/x86_64-pc-windows-gnu/release/${{ env.DEMO_FILENAME }}
-          fail_on_unmatched_files: true
