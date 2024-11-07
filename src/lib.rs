@@ -150,6 +150,13 @@ pub fn verify_tx_input_tapscript(
     input_idx: usize,
     flags: u32,
 ) -> Result<(), VerifyTxError> {
+    if tx.input[input_idx].witness.tapscript().is_none() {
+        return Err(VerifyTxError {
+            input_idx,
+            err_msg: "Not a taproot script spend input".to_string(),
+        })
+    }
+
     let tx_encoded = bitcoin::consensus::serialize(tx);
     let prevouts: Vec<&TxOut> = tx
         .input
@@ -561,8 +568,6 @@ mod test {
         let mut tx_cursor = Cursor::new(tx_bytes);
         let tx: Transaction = Transaction::consensus_decode(&mut tx_cursor)?;
 
-        println!("txid: {}", tx.compute_txid());
-
         let prevout: TxOut = TxOut {
             value: Amount::from_btc(0.00100000).unwrap(),
             script_pubkey: ScriptBuf::from_hex(
@@ -577,6 +582,49 @@ mod test {
             &tx,
             &prevouts,
             0,
+            standard_script_verify_flags() & op_cat_verify_flag(),
+        );
+        assert_eq!(result, Ok(()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multi_input_tx() -> anyhow::Result<()> {
+        let tx_bytes: Vec<u8> = FromHex::from_hex("02000000000103f5054de658ce910c95f79e83284d2eb584d093b5772a09eebe8825adab203be70000000000ffffffff732f571f2fdfb45a463c15d5b31300ffb22a35ca18fd021cc28b373d39d2d9060000000000ffffffffd90a4581ec95e8551fb7af1ea1510a71da94c95925b3adb03b7f73bb91a5ca2a0200000000ffffffff037a040000000000001976a914cbd0e959eff7b08d59f93bf1605f5a5b5239649b88acc045040000000000225120f9414c8366098d8ebaadd5190f375b316ebf13b068083d3ef6822d2741fe2d8cd4883e0000000000225120dfe4d8dfb3f7fff0ba7706ad1f5a79099da5eb0252ce9e72af81930bbbcb9df001405f87b743508953b77bf07482433301e56956a341b025e3ec3e0ea0e8026e17e6997946fd52a19e4dc8a965d3c19ffe9c861ea4be7ffc50d5ff53328a821908750141d2a67fc10087c98446bfff0af818bde789546cdcd833604909a40680d3543b1fd64281e83bb007cc450bfc7f9f7c91102647a9839065a9d517448b0a6885afba83014032a0fa9508d34356bad3726648f00e6bda4740064d63578af0c073ee46e310a5ec9b911d5afab43164a23863ef1015784fb84c86c587da116f648ff5186ee43400000000").unwrap();
+        let mut tx_cursor = Cursor::new(tx_bytes);
+        let tx: Transaction = Transaction::consensus_decode(&mut tx_cursor)?;
+
+        let prevout0: TxOut = TxOut {
+            value: Amount::from_sat(600),
+            script_pubkey: ScriptBuf::from_hex(
+                "5120dfe4d8dfb3f7fff0ba7706ad1f5a79099da5eb0252ce9e72af81930bbbcb9df0",
+            )?
+        };
+
+        let prevout1: TxOut = TxOut {
+            value: Amount::from_sat(546),
+            script_pubkey: ScriptBuf::from_hex(
+                "5120f9414c8366098d8ebaadd5190f375b316ebf13b068083d3ef6822d2741fe2d8c",
+            )?
+        };
+
+        let prevout2: TxOut = TxOut {
+            value: Amount::from_sat(4383797),
+            script_pubkey: ScriptBuf::from_hex(
+                "5120dfe4d8dfb3f7fff0ba7706ad1f5a79099da5eb0252ce9e72af81930bbbcb9df0",
+            )?
+        };
+
+        let prevouts = HashMap::from_iter([
+            (tx.input[0].previous_output, prevout0),
+            (tx.input[1].previous_output, prevout1),
+            (tx.input[2].previous_output, prevout2),
+        ]);
+
+        let result = verify_tx(
+            &tx,
+            &prevouts,
             standard_script_verify_flags() & op_cat_verify_flag(),
         );
         assert_eq!(result, Ok(()));
