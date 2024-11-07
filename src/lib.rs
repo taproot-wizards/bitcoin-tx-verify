@@ -484,7 +484,7 @@ mod test {
         let res = verify_tx(
             &tx,
             &spent_outputs,
-            standard_script_verify_flags() & &op_cat_verify_flag(),
+            standard_script_verify_flags() & op_cat_verify_flag(),
         );
         assert_eq!(res, Ok(()));
         Ok(())
