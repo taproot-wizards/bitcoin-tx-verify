@@ -154,7 +154,7 @@ pub fn verify_tx_input_tapscript(
         return Err(VerifyTxError {
             input_idx,
             err_msg: "Not a taproot script spend input".to_string(),
-        })
+        });
     }
 
     let tx_encoded = bitcoin::consensus::serialize(tx);
