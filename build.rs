@@ -30,7 +30,7 @@ fn configure_bitcoin() {
     let status = Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "cd {SOURCE_DIR} && ./autogen.sh && ./configure --with-secp256k1={out_dir}"
+            "cd {SOURCE_DIR} && ./autogen.sh && ./configure --with-secp256k1={out_dir} --disable-wallet --disable-tests --disable-bench --disable-gui --without-gui --disable-zmq --disable-man --disable-install-doc --disable-shared --with-pic --enable-static"
         ))
         .status()
         .expect("failed to configure Bitcoin Core");
