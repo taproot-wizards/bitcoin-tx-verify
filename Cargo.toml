@@ -8,6 +8,15 @@ documentation = "https://docs.rs/bitcoin-tx-verify"
 homepage = "https://github.com/taproot-wizards/bitcoin-tx-verify"
 repository = "https://github.com/taproot-wizards/bitcoin-tx-verify"
 edition = "2021"
+exclude = [
+    "depends/bitcoin/src/tests/*",
+    "depends/bitcoin/src/bench/*",
+    "depends/bitcoin/src/qt/*",
+    "depends/bitcoin/test/*",
+    "depends/bitcoin/doc/*",
+    "*.py",
+    "*.json",
+]
 
 [build-dependencies]
 cc = "1.0.101"
