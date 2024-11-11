@@ -45,6 +45,9 @@ jobs:
       
       - name: Clippy
         run: cargo clippy --all-targets --all-features
+
+      - name: Tests
+        run: cargo test
   
   build-macos:
     name: Build (macos-x86_64)
