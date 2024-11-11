@@ -13,9 +13,17 @@ exclude = [
     "depends/bitcoin/src/bench/*",
     "depends/bitcoin/src/qt/*",
     "depends/bitcoin/test/*",
-    "depends/bitcoin/doc/*",
     "*.py",
     "*.json",
+    # Keep these autotool files
+    "!depends/bitcoin/test/config.ini.in",
+    "!depends/bitcoin/contrib/filter-lcov.py",
+    "!depends/bitcoin/test/functional/test_runner.py",
+    "!depends/bitcoin/test/fuzz/test_runner.py",
+    "!depends/bitcoin/test/util/test_runner.py",
+    "!depends/bitcoin/test/util/rpcauth-test.py",
+    "!depends/bitcoin/src/qt/Makefile",
+    "!depends/bitcoin/src/qt/test/Makefile"
 ]
 
 [build-dependencies]
