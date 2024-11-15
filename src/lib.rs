@@ -49,6 +49,9 @@ mod ffi {
             scriptPubKeyLen: c_uint,
             txTo: *const c_uchar,
             txToLen: c_uint,
+            prev_outs: *const *const c_uchar,
+            prev_outs_lens: *const c_uint,
+            prev_outs_count: c_uint,
             nIn: c_uint,
             flags: c_uint,
             amount: i64,
@@ -73,24 +76,45 @@ mod ffi {
 }
 
 #[allow(dead_code)]
-pub fn mandatory_script_verify_flags() -> u32 {
+fn mandatory_script_verify_flags() -> u32 {
     unsafe { ffi::mandatory_script_verify_flags() }
 }
 
 #[allow(dead_code)]
-pub fn standard_script_verify_flags() -> u32 {
+fn standard_script_verify_flags() -> u32 {
     unsafe { ffi::standard_script_verify_flags() }
 }
 
-pub fn op_cat_verify_flag() -> u32 {
+fn op_cat_verify_flag() -> u32 {
     unsafe { ffi::op_cat_verify_flag() }
 }
 
-pub fn verify_tapscript(
+#[derive(Debug, Copy, Clone)]
+pub enum VerifyFlags {
+    /// OP_CAT is enabled and enforced
+    OpCatEnabled,
+    /// OP_CAT is disabled and treated as an OP_SUCCESS
+    OpCatDisabled,
+    /// OP_CAT is disabled and will fail if seen
+    OpCatDiscouraged,
+}
+
+impl VerifyFlags {
+    fn flags(&self) -> u32 {
+        match self {
+            VerifyFlags::OpCatEnabled => {
+                mandatory_script_verify_flags() | op_cat_verify_flag()
+            }
+            VerifyFlags::OpCatDisabled => mandatory_script_verify_flags(),
+            VerifyFlags::OpCatDiscouraged => standard_script_verify_flags(),
+        }
+    }
+}
+
+fn verify_tapscript(
     tx_to: &[u8],
     n_in: u32,
     prev_outs: &[Vec<u8>],
-    flags: u32,
     amount: i64,
 ) -> Result<(), String> {
     // Create arrays of pointers and lengths
@@ -105,26 +129,34 @@ pub fn verify_tapscript(
             lengths.as_ptr(),
             prev_outs.len() as c_uint,
             n_in as c_uint,
-            flags as c_uint,
+            mandatory_script_verify_flags() as c_uint,
             amount,
         )
     }
     .into()
 }
 
-pub fn verify(
+fn verify(
     script_pub_key: &[u8],
     tx_to: &[u8],
     n_in: u32,
+    prev_outs: &[Vec<u8>],
     flags: u32,
     amount: i64,
 ) -> Result<(), String> {
+    // Create arrays of pointers and lengths
+    let ptrs: Vec<*const u8> = prev_outs.iter().map(|s| s.as_ptr()).collect();
+    let lengths: Vec<u32> = prev_outs.iter().map(|s| s.len() as u32).collect();
+
     unsafe {
         &*ffi::verify_script(
             script_pub_key.as_ptr(),
             script_pub_key.len() as c_uint,
             tx_to.as_ptr(),
             tx_to.len() as c_uint,
+            ptrs.as_ptr(),
+            lengths.as_ptr(),
+            prev_outs.len() as c_uint,
             n_in as c_uint,
             flags as c_uint,
             amount,
@@ -144,11 +176,12 @@ pub struct VerifyTxError {
 
 /// Verifies the transaction input's tapscript, this does not validate the control block
 /// and assumes there is no annex.
+///
+/// This will always enforce OP_CAT
 pub fn verify_tx_input_tapscript(
     tx: &Transaction,
     spent_outputs: &HashMap<OutPoint, TxOut>,
     input_idx: usize,
-    flags: u32,
 ) -> Result<(), VerifyTxError> {
     if tx.input[input_idx].witness.tapscript().is_none() {
         return Err(VerifyTxError {
@@ -186,7 +219,6 @@ pub fn verify_tx_input_tapscript(
         &tx_encoded,
         input_idx as u32,
         &prevouts_encoded,
-        flags,
         prevouts[input_idx].value.to_sat() as i64,
     ) {
         Err(VerifyTxError { input_idx, err_msg })
@@ -199,9 +231,35 @@ pub fn verify_tx_input_tapscript(
 pub fn verify_tx(
     tx: &Transaction,
     spent_outputs: &HashMap<OutPoint, TxOut>,
-    flags: u32,
+    flags: VerifyFlags,
 ) -> Result<(), VerifyTxError> {
+    let flags = flags.flags();
     let tx_encoded = bitcoin::consensus::serialize(tx);
+
+    let prevouts: Vec<&TxOut> = tx
+        .input
+        .iter()
+        .enumerate()
+        .map(|(idx, i)| {
+            spent_outputs.get(&i.previous_output).ok_or(VerifyTxError {
+                input_idx: idx,
+                err_msg: "Missing previous output".to_string(),
+            })
+        })
+        .collect::<Result<_, _>>()?;
+
+    let prevouts_encoded = prevouts
+        .iter()
+        .map(|o| {
+            let mut bytes = Vec::new();
+            o.value
+                .consensus_encode(&mut bytes)
+                .expect("serialization failed");
+            bytes.extend_from_slice(o.script_pubkey.as_bytes());
+            bytes
+        })
+        .collect::<Vec<Vec<u8>>>();
+
     for (input_idx, input) in tx.input.iter().enumerate() {
         let spent_output = &spent_outputs[&input.previous_output];
         let spk_encoded = &spent_output.script_pubkey.to_bytes();
@@ -209,6 +267,7 @@ pub fn verify_tx(
             spk_encoded,
             &tx_encoded,
             input_idx as u32,
+            &prevouts_encoded,
             flags,
             spent_output.value.to_sat() as i64,
         ) {
@@ -320,7 +379,9 @@ mod test {
         }
 
         // verify tx
-        assert!(verify_tx(&tx, &spent_outputs, op_cat_verify_flag()).is_ok());
+        assert!(
+            verify_tx(&tx, &spent_outputs, VerifyFlags::OpCatEnabled).is_ok()
+        );
         Ok(())
     }
 
@@ -369,17 +430,17 @@ mod test {
             source_tx.output[0].clone(),
         )]);
         // verify tx without OP_CAT enabled should work
-        let res = verify_tx(
-            &tx,
-            &spent_outputs,
-            standard_script_verify_flags() & op_cat_verify_flag(),
-        );
+        let res = verify_tx(&tx, &spent_outputs, VerifyFlags::OpCatDisabled);
         assert_eq!(res, Ok(()));
         // verify tx with OP_CAT enabled should fail
         assert!(
-            verify_tx(&tx, &spent_outputs, standard_script_verify_flags())
-                .is_err()
+            verify_tx(&tx, &spent_outputs, VerifyFlags::OpCatEnabled).is_err()
         );
+        // verify tapscripts enabled should fail
+        for i in 0..tx.input.len() {
+            let res = verify_tx_input_tapscript(&tx, &spent_outputs, i);
+            assert!(res.is_err());
+        }
         Ok(())
     }
 
@@ -429,11 +490,7 @@ mod test {
             source_tx.output[0].clone(),
         )]);
         // verify tx with OP_CAT enabled should succeed
-        let res = verify_tx(
-            &tx,
-            &spent_outputs,
-            standard_script_verify_flags() & op_cat_verify_flag(),
-        );
+        let res = verify_tx(&tx, &spent_outputs, VerifyFlags::OpCatEnabled);
         assert_eq!(res, Ok(()));
         Ok(())
     }
@@ -488,12 +545,14 @@ mod test {
             source_tx.output[0].clone(),
         )]);
         // verify tx with OP_CAT enabled should succeed
-        let res = verify_tx(
-            &tx,
-            &spent_outputs,
-            standard_script_verify_flags() & op_cat_verify_flag(),
-        );
+        let res = verify_tx(&tx, &spent_outputs, VerifyFlags::OpCatEnabled);
         assert_eq!(res, Ok(()));
+        // verify tapscripts
+        for i in 0..tx.input.len() {
+            // verify tx input with OP_CAT enabled should succeed
+            let res = verify_tx_input_tapscript(&tx, &spent_outputs, i);
+            assert_eq!(res, Ok(()));
+        }
         Ok(())
     }
 
@@ -548,15 +607,10 @@ mod test {
             source_tx.output[0].clone(),
         )]);
         // verify tx with OP_CAT disabled should succeed
-        let res = verify_tx(
-            &tx,
-            &spent_outputs,
-            standard_script_verify_flags() & op_cat_verify_flag(),
-        );
+        let res = verify_tx(&tx, &spent_outputs, VerifyFlags::OpCatDisabled);
         assert_eq!(res, Ok(()));
         // verify tx with OP_CAT enabled should fail
-        let res =
-            verify_tx(&tx, &spent_outputs, standard_script_verify_flags());
+        let res = verify_tx(&tx, &spent_outputs, VerifyFlags::OpCatEnabled);
         assert_ne!(res, Ok(()));
 
         Ok(())
@@ -578,12 +632,7 @@ mod test {
         let prevouts =
             HashMap::from_iter([(tx.input[0].previous_output, prevout)]);
 
-        let result = verify_tx_input_tapscript(
-            &tx,
-            &prevouts,
-            0,
-            standard_script_verify_flags() & op_cat_verify_flag(),
-        );
+        let result = verify_tx_input_tapscript(&tx, &prevouts, 0);
         assert_eq!(result, Ok(()));
 
         Ok(())
@@ -622,12 +671,31 @@ mod test {
             (tx.input[2].previous_output, prevout2),
         ]);
 
-        let result = verify_tx(
-            &tx,
-            &prevouts,
-            standard_script_verify_flags() & op_cat_verify_flag(),
-        );
+        let result = verify_tx(&tx, &prevouts, VerifyFlags::OpCatEnabled);
         assert_eq!(result, Ok(()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unsigned_tx_is_invalid() -> anyhow::Result<()> {
+        let tx_bytes: Vec<u8> = FromHex::from_hex("0200000000010194e2eed1469fb0aaa8bcb657ef5bd9213c4ea9cc01ecb34675ad78fd698940ba0000000000ffffffff01804a5d050000000022512049bda78532256ef251828cf06a294361061d44636bef532d9df43c8126906b13113f79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817988dc934fcf372d23589f24421038a27115192b088676521b3a3f80843ac88f001000100040200000004290100002067c7507c94653d313b1818223e414e0e3fdb8903b31da00b450233b75c477fa1202c3417ea6a6d07f4a0218f5b1d380037c8b95c24eeb4e70299776a634a0dffa2204895f9f74569955d5f4b004d1a4fe0d9c57f2d3bc46e3fa26529df26d30cfb0820ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e010220b8dcbfe33ee00b3f465b72caa0ca1c3fac4220edb3b8ced42b2856ecf3c4d51c010004ffffffff08804a5d05000000002322512049bda78532256ef251828cf06a294361061d44636bef532d9df43c8126906b13c50063036361744c927ea804000000005e7a5e7a5e7a5e7a5e7a5e7a5e7a5e7a5e7a5a7a5e7a5b7a5e7a5e7a5e7a7e7e7e7e7e7e7e7e7e7e7e7e7e0a54617053696768617368a8767b7e7ea811424950303334302f6368616c6c656e6765a8767b2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817987676766b6b7b7e7e7e7ea86c7c7e7c7601007e7b88517e6cac686d6d6d6d6d6d6d7520d294d344d568526e925ff19cdb824ba9c5c946b6ea4bb43a6ab59b25e94fad7aac21c150929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac029010000").unwrap();
+        let mut tx_cursor = Cursor::new(tx_bytes);
+        let tx: Transaction = Transaction::consensus_decode(&mut tx_cursor)?;
+
+        let prevout: TxOut = TxOut {
+            script_pubkey: ScriptBuf::from_hex("512049bda78532256ef251828cf06a294361061d44636bef532d9df43c8126906b13")?,
+            value: Amount::from_sat(90_000_000),
+        };
+
+        let prevouts =
+            HashMap::from_iter([(tx.input[0].previous_output, prevout)]);
+
+        let result = verify_tx_input_tapscript(&tx, &prevouts, 0);
+        assert!(result.is_err());
+
+        let result = verify_tx(&tx, &prevouts, VerifyFlags::OpCatDiscouraged);
+        assert!(result.is_err());
 
         Ok(())
     }

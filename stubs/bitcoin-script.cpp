@@ -59,6 +59,11 @@ extern "C" {
 
     VerifyScriptResult* verify_script(const uint8_t* scriptPubKey, uint32_t scriptPubKeyLen,
                        const uint8_t* txTo, uint32_t txToLen,
+                       // Array of pointers to byte arrays
+                       const uint8_t* const* prev_outs,
+                       // Array of lengths corresponding to each byte array
+                       const uint32_t* prev_out_lengths,
+                       uint32_t prev_out_counts,
                        unsigned int nIn, unsigned int flags,
                        int64_t amount_in) {
         // Convert inputs to appropriate types
@@ -69,19 +74,47 @@ extern "C" {
         DataStream stream(vtxTo);
         const CTransaction tx(deserialize, TX_WITH_WITNESS, stream);
 
+        std::vector<CTxOut> txouts;
+        txouts.reserve(prev_out_counts);
+
+        for (uint32_t i = 0; i < prev_out_counts; i++) {
+            const uint8_t* data = prev_outs[i];
+            uint32_t len = prev_out_lengths[i];
+
+            // First 8 bytes are value (amount)
+            if (len < 8) {
+                return new VerifyScriptResult(false, "TxOut data too short for value");
+            }
+
+            // Parse value (amount) - assuming little endian
+            CAmount value;
+            std::memcpy(&value, data, sizeof(value));
+
+            // Remaining bytes are scriptPubKey
+            CScript script(data + 8, data + len);
+
+
+            CTxOut txout(value, script);
+            txouts.emplace_back(txout);
+        }
+
+        // sig checker
+        PrecomputedTransactionData txdata(tx);
+        txdata.Init(tx, std::move(txouts), false);
+        TransactionSignatureChecker checker = TransactionSignatureChecker(&tx, nIn, amount_in, txdata, MissingDataBehavior::FAIL);
+
         // Verify the script
         ScriptError scriptErr;
         bool success = VerifyScript(
             tx.vin[nIn].scriptSig, CScript(vscriptPubKey.begin(), vscriptPubKey.end()),
             &tx.vin[nIn].scriptWitness, flags,
-            TransactionSignatureChecker(&tx, nIn, amount_in, MissingDataBehavior::FAIL),
-            &scriptErr
+            checker, &scriptErr
         );
-        if (success) {
-            return new VerifyScriptResult(success, "");
+        if (success && scriptErr == ScriptError::SCRIPT_ERR_OK) {
+            return new VerifyScriptResult(true, "");
         } else {
             std::string err_msg = ScriptErrorString(scriptErr);
-            return new VerifyScriptResult(success, err_msg);
+            return new VerifyScriptResult(false, err_msg);
         }
     }
 
